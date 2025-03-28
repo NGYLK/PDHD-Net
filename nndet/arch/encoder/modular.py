@@ -171,15 +171,12 @@ class Encoder(AbstractEncoder):
         # Step 1: FFT分离高低频
         low_freq, high_freq = self.fft_module(x)
         
-<<<<<<< HEAD
         # 只输出低频能量占比
         low_energy = torch.sum(torch.abs(low_freq) ** 2)
         total_energy = torch.sum(torch.abs(x) ** 2)
         low_freq_ratio = low_energy / total_energy
         #logger.info(f"低频能量占比: {low_freq_ratio.item():.4f}")
         
-=======
->>>>>>> 864d4cade90dccff407e62481e9e8e0b38c746b0
         # Step 2: 将低频信息输入到 SwinTransformer
         if self.use_transformer:
             transformer_feats = self.transformer(low_freq)
@@ -194,19 +191,10 @@ class Encoder(AbstractEncoder):
             # 融合 CNN 和 Transformer 特征
             if self.use_transformer and stage_id < len(self.transformer_out_channels):
                 transformer_feat = transformer_feats[stage_id]
-<<<<<<< HEAD
                 transformer_feat_resized = F.interpolate(
                     transformer_feat, size=cnn_x.shape[2:], 
                     mode='trilinear', align_corners=False
                 )
-=======
-                
-                # 确保尺寸一致
-                transformer_feat_resized = F.interpolate(
-                    transformer_feat, size=cnn_x.shape[2:], mode='trilinear', align_corners=False)
-                
-                # 使用自注意力融合机制
->>>>>>> 864d4cade90dccff407e62481e9e8e0b38c746b0
                 fused_x = self.self_attention_fusion_modules[stage_id](cnn_x, transformer_feat_resized)
                 cnn_x = fused_x
             

@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
-<<<<<<< HEAD
 import torch.nn.functional as F
-=======
->>>>>>> 864d4cade90dccff407e62481e9e8e0b38c746b0
 
 class FFT3D(nn.Module):
     def __init__(self, in_channels: int, low_ratio: float = 0.4):
