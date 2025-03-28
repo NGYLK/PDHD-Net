@@ -1,0 +1,31 @@
+拉取最新代码
+git pull origin main
+查看修改状态
+git status
+
+# 查看修改
+git diff
+
+# 添加特定文件
+git add 文件路径
+
+# 添加所有文件
+git add .
+
+# 提交
+git commit -m "明确的提交消息，说明此次更改内容"
+
+推送到GitHub
+git push origin main
+
+# 查找超过5MB的文件
+find . -type f -size +5M -not -path "./.git/*" | sort -k1,1
+
+# 从Git缓存中移除大文件
+git rm --cached 大文件路径
+
+# 更新 .gitignore
+echo "大文件路径" >> .gitignore
+
+# 提交更改
+git commit -m "移除大文件，并更新.gitignore"

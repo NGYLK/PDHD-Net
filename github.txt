@@ -1,0 +1,13 @@
+# 查看变更状态
+git status
+
+# 添加修改的文件到暂存区
+git add 文件名           # 添加特定文件
+git add 目录名/          # 添加整个目录
+git add .               # 添加所有变更
+
+# 提交变更
+git commit -m "描述您的变更"
+
+# 推送到GitHub
+git push
