@@ -222,7 +222,7 @@ class BiFPN3D(nn.Module):
         """
         p3_in, p4_in, p5_in, p6_in, p7_in = inputs
 
-        #print("对齐前的形状：")
+        #   print("对齐前的形状：")
         #print(f"p3_in shape: {p3_in.shape}")
         #print(f"p4_in shape: {p4_in.shape}")
         #print(f"p5_in shape: {p5_in.shape}")
@@ -257,7 +257,7 @@ class BiFPN3D(nn.Module):
 
             # 对 p7_in 进行深度上采样，从 7 增加到 14
             p7_in = F.interpolate(p7_in, scale_factor=(2, 1, 1), mode='nearest')
-            p6_in = F.interpolate(p6_in, scale_factor=(2, 1, 1), mode='nearest')
+            #p6_in = F.interpolate(p6_in, scale_factor=(2, 1, 1), mode='nearest')
 
             p6_w1 = self.p6_w1_relu(self.p6_w1)
             weight = p6_w1 / (torch.sum(p6_w1, dim=0, keepdim=True) + self.epsilon)
