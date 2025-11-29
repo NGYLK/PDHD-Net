@@ -2,6 +2,12 @@
 det_data/
 det_models/
 
+# 排除特定的脚本文件
+plot_froc_curves.py
+evaluate_test_centroid_froc.py
+evaluate_predictions.py
+create_task022_merged.py
+
 # 其他常见排除项
 __pycache__/
 *.py[cod]

@@ -37,7 +37,7 @@ def atomic_image_write(
         if dst_path_bak.exists():
             raise FileExistsError(f"已有备份文件存在于 {dst_path_bak}.")
         path.rename(dst_path_bak)
-
+MUJ
     # 重命名临时文件为目标文件
     path_tmp.rename(path)
 

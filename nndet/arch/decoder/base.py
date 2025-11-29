@@ -620,15 +620,29 @@ class ClassBiFPN(UFPNModular):
                          norm_fusion=norm_fusion,
                          activation_fusion=activation_fusion)
         
-        # 定义默认的 BiFPN 参数
+        # 定义 BiFPN 参数，使用实际的FPN输出通道数
+        # 使用compute_output_channels计算的实际通道数，取前5层
+        fpn_out_channels = self.compute_output_channels()[:5]
         default_bifpn_params = {
             'num_channels': 128,
-            'conv_channels': [64, 128, 128, 128, 128],
+            'conv_channels': fpn_out_channels,
             'first_time': False,
             'epsilon': 1e-4,
             'attention': True
         }
         self.bifpn = BiFPN3D(**default_bifpn_params)
+        
+        # BiFPN输出通道调整层，将p3的64通道调整回原始通道数
+        self.bifpn_out_adjust = nn.ModuleDict()
+        bifpn_out_channels = [128//2, 128, 128, 128, 128]  # BiFPN输出通道数
+        for level in range(5):
+            if bifpn_out_channels[level] != self.out_channels[level]:
+                self.bifpn_out_adjust[f"P{level}"] = nn.Conv3d(
+                    bifpn_out_channels[level], self.out_channels[level], 
+                    kernel_size=1, bias=False
+                )
+            else:
+                self.bifpn_out_adjust[f"P{level}"] = nn.Identity()
         
     def forward(self, inp_seq: Sequence[torch.Tensor]) -> List[torch.Tensor]:
         """
@@ -646,8 +660,18 @@ class ClassBiFPN(UFPNModular):
         # 使用 BiFPN 处理特征图
         bifpn_outputs = self.bifpn(fpn_maps)
         
+        # 调整BiFPN输出通道数
+        adjusted_outputs = []
+        for level, fm in enumerate(bifpn_outputs):
+            adjusted_fm = self.bifpn_out_adjust[f"P{level}"](fm)
+            adjusted_outputs.append(adjusted_fm)
+            # 如果原始FPN有6层输出，需要补充第6层
+        if len(fpn_maps) == 6:
+            # 使用最后一层特征图作为第6层（简单复制）
+            adjusted_outputs.append(fpn_maps[5])
+        
         # 应用输出卷积
-        out_features = self.forward_out(bifpn_outputs)
+        out_features = self.forward_out(adjusted_outputs)
         
         return out_features
 

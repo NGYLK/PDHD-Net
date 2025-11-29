@@ -22,7 +22,7 @@ import numpy as np
 
 from nndet.evaluator.abstract import AbstractEvaluator, DetectionMetric
 from nndet.evaluator.detection.matching import matching_batch
-from nndet.core.boxes import box_iou_np
+from nndet.core.boxes import box_iou_np, box_centroid_similarity_np
 from nndet.evaluator.detection.coco import COCOMetric
 from nndet.evaluator.detection.froc import FROCMetric
 from nndet.evaluator.detection.hist import PredictionHistogram
@@ -173,6 +173,8 @@ class BoxEvaluator(DetectionEvaluator):
                fast: bool = True,
                verbose: bool = False,
                save_dir: Optional[Path] = None,
+               use_centroid: bool = False,
+               spacing: Sequence[float] = None,
                ):
         """
         Create an box evaluator object
@@ -184,14 +186,44 @@ class BoxEvaluator(DetectionEvaluator):
                 Does no calculate pre class metrics
             verbose: Additional logging output
             save_dir: Path to save information
+            use_centroid: Use centroid distance instead of IoU for matching
+            spacing: Image spacing for converting voxel distance to mm (only used if use_centroid=True)
 
         Returns:
             BoxEvaluator: evaluator to efficiently compute metrics
         """
-        iou_fn = box_iou_np
-        iou_range = (0.1, 0.5, 0.05)
-        iou_thresholds = (0.1, 0.5) if fast else np.arange(0.1, 1.0, 0.1)
-        per_class = False if fast else True
+        if use_centroid:
+            # Centroid distance mode - Academic standard implementation
+            # Uses physical space (mm) distance with exponential decay similarity
+            
+            # Create iou_fn with spacing parameter for physical space conversion
+            iou_fn = lambda b1, b2: box_centroid_similarity_np(b1, b2, spacing=spacing)
+            
+            # Similarity thresholds using exponential decay: sim = exp(-distance/sigma), sigma=10mm
+            # These thresholds correspond to physical distances in mm:
+            # sim = exp(-d/10) => d = -10*ln(sim)
+            # 
+            # Target distances and corresponding similarity thresholds:
+            # - 10mm: sim = exp(-10/10) = exp(-1) ≈ 0.368
+            # - 15mm: sim = exp(-15/10) = exp(-1.5) ≈ 0.223  
+            # - 5mm:  sim = exp(-5/10) = exp(-0.5) ≈ 0.607
+            # - 2mm:  sim = exp(-2/10) = exp(-0.2) ≈ 0.819
+            #
+            # This approach is standard in medical image analysis (LUNA16, PI-CAI, etc.)
+            if fast:
+                iou_range = (0.223, 0.819, 0.05)  # 15mm to 2mm 
+                iou_thresholds = (0.368, 0.223)  # 10mm and 15mm
+            else:
+                iou_range = (0.135, 0.9, 0.05)  # 20mm to ~1mm
+                iou_thresholds = (0.819, 0.607, 0.368, 0.223)  # 2mm, 5mm, 10mm, 15mm
+            
+            per_class = False if fast else True
+        else:
+            # Original IoU mode
+            iou_fn = box_iou_np
+            iou_range = (0.1, 0.5, 0.05)
+            iou_thresholds = (0.1, 0.5) if fast else np.arange(0.1, 1.0, 0.1)
+            per_class = False if fast else True
 
         metrics = []
         metrics.append(
@@ -217,7 +249,7 @@ class BoxEvaluator(DetectionEvaluator):
             metrics.append(
                 PredictionHistogram(classes=classes,
                                     save_dir=save_dir,
-                                    iou_thresholds=(0.1, 0.5),
+                                    iou_thresholds=iou_thresholds[:2] if use_centroid else (0.1, 0.5),
                                     )
                 )
         return cls(metrics=tuple(metrics), iou_fn=iou_fn)

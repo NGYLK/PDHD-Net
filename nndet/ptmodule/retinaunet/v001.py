@@ -17,8 +17,8 @@ limitations under the License.
 from nndet.ptmodule.retinaunet.base import RetinaUNetModule
 
 from nndet.core.boxes.matcher import ATSSMatcher
-from nndet.arch.heads.classifier import BCECLassifier
-from nndet.arch.heads.regressor import GIoURegressor
+from nndet.arch.heads.classifier import BCECLassifier, FocalClassifier, AsymmetricFocalClassifier
+from nndet.arch.heads.regressor import GIoURegressor, MedicalSmallTargetRegressor
 from nndet.arch.heads.comb import DetectionHeadHNMNative
 from nndet.arch.heads.segmenter import DiCESegmenterFgBg
 from nndet.arch.conv import ConvInstanceRelu, ConvGroupRelu
@@ -32,7 +32,7 @@ class RetinaUNetV001(RetinaUNetModule):
     head_conv_cls = ConvGroupRelu
 
     head_cls = DetectionHeadHNMNative
-    head_classifier_cls = BCECLassifier
-    head_regressor_cls = GIoURegressor
+    head_classifier_cls = AsymmetricFocalClassifier
+    head_regressor_cls = MedicalSmallTargetRegressor
     matcher_cls = ATSSMatcher
     segmenter_cls = DiCESegmenterFgBg

@@ -191,14 +191,28 @@ def main():
         ensembler_cls = module.get_ensembler_cls(
             key="boxes", dim=plan["network_dim"])  # TODO: make this configurable
 
+        # 启用质心距离评估（与训练时保持一致）
+        use_centroid = True
+        spacing = plan.get("spacing", [3.0, 0.5, 0.5])  # 默认前列腺spacing
+        logger.info(f"Using centroid distance evaluation with spacing: {spacing}")
+        
+        # 质心距离模式下使用不同的target_metric
+        if use_centroid:
+            # fast=True: 15mm-2mm range -> mAP_IoU_0.22_0.82_0.05_MaxDet_100
+            target_metric = "mAP_IoU_0.22_0.82_0.05_MaxDet_100"
+        else:
+            target_metric = cfg["trainer_cfg"].get("eval_score_key",
+                                                   "mAP_IoU_0.10_0.50_0.05_MaxDet_100")
+        
         sweeper = BoxSweeper(
             classes=[item for _, item in cfg["data"]["labels"].items()],
             pred_dir=target_dir / "sweep_predictions",
             gt_dir=gt_dir,
-            target_metric=cfg["trainer_cfg"].get("eval_score_key",
-                                                 "mAP_IoU_0.10_0.50_0.05_MaxDet_100"),
+            target_metric=target_metric,
             ensembler_cls=ensembler_cls,
             save_dir=target_dir / "sweep",
+            use_centroid=use_centroid,
+            spacing=spacing,
         )
         inference_plan = sweeper.run_postprocessing_sweep()
     elif sweep_instances:

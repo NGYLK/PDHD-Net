@@ -147,13 +147,13 @@ class BiFPN3D(nn.Module):
         self.epsilon = epsilon
         self.attention = attention
         self.first_time = first_time
-
-        # 定义对齐层，直接使用显式的对齐层而非循环生成
-        self.align_p3 = nn.Conv3d(conv_channels[0], num_channels//2, kernel_size=1)
-        self.align_p4 = nn.Conv3d(conv_channels[1], num_channels, kernel_size=1)
-        self.align_p5 = nn.Conv3d(conv_channels[2], num_channels, kernel_size=1)
-        self.align_p6 = nn.Conv3d(conv_channels[3], num_channels, kernel_size=1)
-        self.align_p7 = nn.Conv3d(conv_channels[4], num_channels, kernel_size=1)
+        # 定义对齐层，使用FPN实际输出的通道数
+        # 通道数可能因decoder_levels设置而不同（高分辨率层可能减半）
+        self.align_p3 = nn.Conv3d(conv_channels[0], num_channels//2, kernel_size=1)  # 动态 -> 64
+        self.align_p4 = nn.Conv3d(conv_channels[1], num_channels, kernel_size=1)     # 动态 -> 128
+        self.align_p5 = nn.Conv3d(conv_channels[2], num_channels, kernel_size=1)     # 动态 -> 128
+        self.align_p6 = nn.Conv3d(conv_channels[3], num_channels, kernel_size=1)     # 动态 -> 128
+        self.align_p7 = nn.Conv3d(conv_channels[4], num_channels, kernel_size=1)     # 动态 -> 128
 
         # 下面是与 BiFPN 计算流程相关的层/模块，保持原样即可
         self.conv6_up = SeparableConvBlock3D(num_channels, onnx_export=onnx_export)
@@ -166,16 +166,17 @@ class BiFPN3D(nn.Module):
         self.conv6_down = SeparableConvBlock3D(num_channels, onnx_export=onnx_export)
         self.conv7_down = SeparableConvBlock3D(num_channels, onnx_export=onnx_export)
 
-        # 注意：以下 Upsample(2,2,2) 或 (1,2,2) 等需手动与实际 Encoder 匹配
-        self.p6_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')
-        self.p5_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')
-        self.p4_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')
-        self.p3_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')
+        # 根据实际特征图尺寸调整上采样和下采样
+        # 实际尺寸: p3[14,112,128] p4[14,56,64] p5[14,28,32] p6[7,14,16] p7[7,7,8]
+        self.p6_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')  # p7[7,7,8] -> [7,14,16] 匹配p6
+        self.p5_upsample = nn.Upsample(scale_factor=(2, 2, 2), mode='nearest')  # p6[7,14,16] -> [14,28,32] 匹配p5  
+        self.p4_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')  # p5[14,28,32] -> [14,56,64] 匹配p4
+        self.p3_upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='nearest')  # p4[14,56,64] -> [14,112,128] 匹配p3
 
-        self.p4_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))
-        self.p5_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))
-        self.p6_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))
-        self.p7_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))
+        self.p4_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))  # p3[14,112,128] -> [14,56,64]
+        self.p5_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))  # p4[14,56,64] -> [14,28,32]
+        self.p6_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(2, 2, 2))  # p5[14,28,32] -> [7,14,16]
+        self.p7_downsample = MaxPool3dStaticSamePadding(kernel_size=3, stride=(1, 2, 2))  # p6[7,14,16] -> [7,7,8]
 
         self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
 
@@ -217,17 +218,24 @@ class BiFPN3D(nn.Module):
 
     def forward(self, inputs):
         """
-        如果是 5 层输入，则先用 align_p* 把 p3,p4,p5,p6,p7 都变到统一通道数 (num_channels)。
-        然后再执行 BiFPN 的多尺度融合。
+        动态处理输入层数，兼容5层或6层输入
         """
-        p3_in, p4_in, p5_in, p6_in, p7_in = inputs
+        # 动态处理输入数量
+        if len(inputs) == 6:
+            # 6层输入：取前5层用于BiFPN
+            p3_in, p4_in, p5_in, p6_in, p7_in, _ = inputs
+        elif len(inputs) == 5:
+            # 5层输入：直接使用
+            p3_in, p4_in, p5_in, p6_in, p7_in = inputs
+        else:
+            raise ValueError(f"BiFPN expects 5 or 6 input layers, got {len(inputs)}")
 
-        #   print("对齐前的形状：")
-        #print(f"p3_in shape: {p3_in.shape}")
-        #print(f"p4_in shape: {p4_in.shape}")
-        #print(f"p5_in shape: {p5_in.shape}")
-        #print(f"p6_in shape: {p6_in.shape}")
-        #print(f"p7_in shape: {p7_in.shape}")
+        # print("对齐前的形状：")
+        # print(f"p3_in shape: {p3_in.shape}")
+        # print(f"p4_in shape: {p4_in.shape}")
+        # print(f"p5_in shape: {p5_in.shape}")
+        # print(f"p6_in shape: {p6_in.shape}")
+        # print(f"p7_in shape: {p7_in.shape}")
 
         # 应用对齐层
         p3_in = self.align_p3(p3_in)
@@ -235,13 +243,7 @@ class BiFPN3D(nn.Module):
         p5_in = self.align_p5(p5_in)
         p6_in = self.align_p6(p6_in)
         p7_in = self.align_p7(p7_in)
-
-        #print("对齐后的形状：")
-        #print(f"p3_in shape: {p3_in.shape}")
-        #print(f"p4_in shape: {p4_in.shape}")
-        #print(f"p5_in shape: {p5_in.shape}")
-        #print(f"p6_in shape: {p6_in.shape}")
-        #print(f"p7_in shape: {p7_in.shape}")
+        
 
         # 根据你的 attention 开关，进入 fast_attention 或普通 _forward
         if self.attention:
@@ -255,8 +257,8 @@ class BiFPN3D(nn.Module):
         if not self.first_time:
             p3_in, p4_in, p5_in, p6_in, p7_in = inputs
 
-            # 对 p7_in 进行深度上采样，从 7 增加到 14
-            p7_in = F.interpolate(p7_in, scale_factor=(2, 1, 1), mode='nearest')
+            # 不需要对p7_in进行深度上采样，因为会导致尺寸不匹配
+            # p7_in = F.interpolate(p7_in, scale_factor=(2, 1, 1), mode='nearest')
             #p6_in = F.interpolate(p6_in, scale_factor=(2, 1, 1), mode='nearest')
 
             p6_w1 = self.p6_w1_relu(self.p6_w1)

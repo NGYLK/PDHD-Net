@@ -180,6 +180,9 @@ def main():
                         type=int, default=3, required=False,
                         help="Number of processes to use for resampling.",
                         )
+    parser.add_argument('--seg_only', 
+                   action='store_true',
+                   help="Only perform segmentation prediction")
 
     args = parser.parse_args()
     model = args.model

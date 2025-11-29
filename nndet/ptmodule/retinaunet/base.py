@@ -47,8 +47,8 @@ from nndet.arch.blocks.basic import StackedConvBlock2
 from nndet.arch.encoder.abstract import EncoderType
 from nndet.arch.encoder.modular import Encoder
 from nndet.arch.decoder.base import DecoderType, BaseUFPN, UFPNModular,ClassBiFPN
-from nndet.arch.heads.classifier import ClassifierType, CEClassifier
-from nndet.arch.heads.regressor import RegressorType, L1Regressor
+from nndet.arch.heads.classifier import ClassifierType, CEClassifier, FocalClassifier, AsymmetricFocalClassifier
+from nndet.arch.heads.regressor import RegressorType, L1Regressor, MedicalSmallTargetRegressor
 from nndet.arch.heads.comb import HeadType, DetectionHeadHNM
 from nndet.arch.heads.segmenter import SegmenterType, DiCESegmenter
 
@@ -79,8 +79,8 @@ class RetinaUNetModule(LightningBaseModuleSWA):
     decoder_cls = ClassBiFPN
     matcher_cls = IoUMatcher
     head_cls = DetectionHeadHNM
-    head_classifier_cls = CEClassifier
-    head_regressor_cls = L1Regressor
+    head_classifier_cls = AsymmetricFocalClassifier
+    head_regressor_cls = MedicalSmallTargetRegressor
     head_sampler_cls = HardNegativeSamplerBatched
     segmenter_cls = DiCESegmenter
 
@@ -107,10 +107,26 @@ class RetinaUNetModule(LightningBaseModuleSWA):
         )
 
         _classes = [f"class{c}" for c in range(plan["architecture"]["classifier_classes"])]
+        
+        # 获取spacing信息（用于质心距离计算）
+        # 优先从plan中获取，如果没有则使用合理的默认值
+        if "spacing" in plan:
+            spacing = plan["spacing"]
+        elif "data_info" in plan and "spacing" in plan["data_info"]:
+            spacing = plan["data_info"]["spacing"]
+        else:
+            # 使用合理的默认值（对于医学图像，通常是[0.5, 0.5, 3.0]左右）
+            spacing = [0.5, 0.5, 3.0]
+            logger.info(f"Spacing not found in plan, using default: {spacing}")
+        
+        # 创建检测评估器（启用质心距离模式）
+        use_centroid = True  # 使用质心距离
         self.box_evaluator = BoxEvaluator.create(
             classes=_classes,
-            fast=True,
-            save_dir=None,
+            fast=False,  # 启用FROC分析（包括per-class）
+            save_dir=None,  # 不保存FROC图像
+            use_centroid=use_centroid,  # 使用质心距离而不是IoU
+            spacing=spacing,  # 传递spacing用于距离计算
             )
         self.seg_evaluator = SegmentationEvaluator.create()
 
@@ -133,7 +149,15 @@ class RetinaUNetModule(LightningBaseModuleSWA):
                 )
             )
 
-        self.eval_score_key = "mAP_IoU_0.10_0.50_0.05_MaxDet_100"
+        # 设置eval_score_key（根据评估模式）
+        if use_centroid:
+            # 质心距离模式：mAP_IoU_{min_sim}_{max_sim}_0.05_MaxDet_100
+            # fast=False时: iou_range=(0.135, 0.9, 0.05) => mAP_IoU_0.14_0.90_0.05
+            # 对应距离范围：20mm (~0.135) to ~1mm (0.9)
+            self.eval_score_key = "mAP_IoU_0.14_0.90_0.05_MaxDet_100"
+        else:
+            # IoU模式
+            self.eval_score_key = "mAP_IoU_0.10_0.50_0.05_MaxDet_100"
 
     def training_step(self, batch, batch_idx):
         """
@@ -278,18 +302,55 @@ class RetinaUNetModule(LightningBaseModuleSWA):
         Uses the cached values from `evaluation_step` to perform the evaluation
         of the epoch
         """
-        metric_scores, _ = self.box_evaluator.finish_online_evaluation()
+        metric_scores, metric_curves = self.box_evaluator.finish_online_evaluation()
         self.box_evaluator.reset()
 
-        logger.info(f"mAP@0.1:0.5:0.05: {metric_scores['mAP_IoU_0.10_0.50_0.05_MaxDet_100']:0.3f}  "
-                    f"AP@0.1: {metric_scores['AP_IoU_0.10_MaxDet_100']:0.3f}  "
-                    f"AP@0.5: {metric_scores['AP_IoU_0.50_MaxDet_100']:0.3f}")
-
+        # 分割指标
         seg_scores, _ = self.seg_evaluator.finish_online_evaluation()
         self.seg_evaluator.reset()
         metric_scores.update(seg_scores)
 
-        logger.info(f"Proxy FG Dice: {seg_scores['seg_dice']:0.3f}")
+        # 输出Dice分数
+        logger.info(f"Dice Score: {seg_scores['seg_dice']:0.3f}")
+        
+        # 获取类别数量（直接从plan获取）
+        num_classes = self.plan["architecture"]["classifier_classes"]
+        
+        # 输出每个类别在FP=2时的敏感度
+        # 使用学术标准：物理空间（mm）的质心距离
+        # 相似度阈值：0.368 -> 10mm, 0.223 -> 15mm (基于 exp(-distance/10))
+        
+        # FROCMetric生成的是FROC_curve_IoU_{threshold:.2f}数组
+        # fpi_thresholds = (1/8, 1/4, 1/2, 1, 2, 4, 8), FP=2对应索引4
+        fpi_idx_2 = 4  # FP=2对应的索引
+        
+        # 先输出所有类别的平均值
+        curve_10mm = metric_curves.get('FROC_curve_IoU_0.37', None)
+        curve_15mm = metric_curves.get('FROC_curve_IoU_0.22', None)
+        if curve_10mm is not None and curve_15mm is not None:
+            sens_10mm_fp2_mean = curve_10mm[fpi_idx_2]
+            sens_15mm_fp2_mean = curve_15mm[fpi_idx_2]
+            logger.info(f"FROC Sensitivity at FP=2.0 (ALL classes) -> Centroid@10mm: {sens_10mm_fp2_mean:0.3f}  Centroid@15mm: {sens_15mm_fp2_mean:0.3f}")
+        
+        # 输出每个类别的敏感度
+        for class_idx in range(num_classes):
+            curve_10mm_class = metric_curves.get(f'class{class_idx}_FROC_curve_IoU_0.37', None)
+            curve_15mm_class = metric_curves.get(f'class{class_idx}_FROC_curve_IoU_0.22', None)
+            if curve_10mm_class is not None and curve_15mm_class is not None:
+                sens_10mm_fp2 = curve_10mm_class[fpi_idx_2]
+                sens_15mm_fp2 = curve_15mm_class[fpi_idx_2]
+                logger.info(f"FROC Sensitivity at FP=2.0 (class{class_idx}) -> Centroid@10mm: {sens_10mm_fp2:0.3f}  Centroid@15mm: {sens_15mm_fp2:0.3f}")
+            else:
+                logger.info(f"FROC Sensitivity at FP=2.0 (class{class_idx}) -> Centroid@10mm: nan  Centroid@15mm: nan")
+        
+        # 输出mAP作为参考（使用实际生成的mAP键）
+        # 质心模式下的mAP key: mAP_IoU_0.22_0.82_0.05_MaxDet_100
+        # 从metric_scores中查找以mAP开头的键
+        map_keys = [k for k in metric_scores.keys() if k.startswith('mAP_IoU')]
+        if map_keys:
+            # 使用第一个mAP键
+            map_key = map_keys[0]
+            logger.info(f"mAP (Centroid): {metric_scores[map_key]:0.3f}")
 
         for key, item in metric_scores.items():
             self.log(f'{key}', item, on_step=None, on_epoch=True, prog_bar=False, logger=True)
@@ -413,7 +474,7 @@ class RetinaUNetModule(LightningBaseModuleSWA):
         )
 
         detections_per_img = plan_arch.get("detections_per_img", 100)
-        score_thresh = plan_arch.get("score_thresh", 0)
+        score_thresh = plan_arch.get("score_thresh", 0)  # 提高置信度阈值过滤噪音框
         topk_candidates = plan_arch.get("topk_candidates", 10000)
         remove_small_boxes = plan_arch.get("remove_small_boxes", 0.01)
         nms_thresh = plan_arch.get("nms_thresh", 0.6)

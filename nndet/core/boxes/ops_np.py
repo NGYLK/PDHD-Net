@@ -152,3 +152,51 @@ def box_center_np(boxes: np.ndarray) -> np.ndarray:
     if boxes.shape[1] == 6:
         centers.append((boxes[:, 5] + boxes[:, 4]) / 2.)
     return np.stack(centers, axis=1)
+
+
+def box_centroid_similarity_np(boxes1: ndarray, boxes2: ndarray, 
+                                 spacing: ndarray = None) -> ndarray:
+    """
+    Compute centroid distance based similarity in PHYSICAL SPACE (mm)
+    
+    This implementation follows the academic standard for medical image analysis:
+    - Computes Euclidean distance between box centroids in physical space (mm)
+    - Converts to similarity score compatible with IoU-based matching framework
+    - Uses inverse exponential decay: similarity = exp(-distance / sigma)
+    
+    Args:
+        boxes1 (ndarray): boxes (x1, y1, x2, y2, (z1, z2))[N, dim * 2] in voxel coordinates
+        boxes2 (ndarray): boxes (x1, y1, x2, y2, (z1, z2))[M, dim * 2] in voxel coordinates  
+        spacing (ndarray): voxel spacing in mm [sx, sy, sz] for converting to physical space
+    
+    Returns:
+        similarity (ndarray[N, M]): similarity scores where higher = closer distance
+            Uses sigma = 10mm for exponential decay (distance=0 -> sim=1, distance=10mm -> sim≈0.37)
+    
+    References:
+        Standard practice in medical image detection (e.g., LUNA16, PI-CAI challenges)
+        Uses physical distance for small target detection tasks
+    """
+    ndim = boxes1.shape[1] // 2
+    
+    # Compute centroids in voxel space
+    center1 = (boxes1[:, :ndim] + boxes1[:, ndim:]) * 0.5  # [N, ndim]
+    center2 = (boxes2[:, :ndim] + boxes2[:, ndim:]) * 0.5  # [M, ndim]
+    
+    # Convert to physical space (mm) using spacing
+    if spacing is not None:
+        spacing_array = np.array(spacing[:ndim])  # [ndim]
+        # Compute weighted distance in physical space
+        diff = (center1[:, None, :] - center2[None, :, :]) * spacing_array[None, None, :]  # [N, M, ndim]
+        distances_mm = np.linalg.norm(diff, axis=2)  # [N, M] in mm
+    else:
+        # Fallback: Euclidean distance in voxel space
+        distances_mm = np.linalg.norm(center1[:, None, :] - center2[None, :, :], axis=2)
+    
+    # Convert distance (mm) to similarity using exponential decay
+    # sigma = 10mm: distance=0mm -> sim=1.0, distance=10mm -> sim=0.368, distance=20mm -> sim=0.135
+    # This ensures smooth decay and avoids arbitrary max_distance cutoff
+    sigma = 10.0  # mm, controls the decay rate
+    similarity = np.exp(-distances_mm / sigma)
+    
+    return similarity
