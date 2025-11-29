@@ -5,7 +5,8 @@ PDHD-Net is an advanced 3D object detection framework for multi-grade prostate c
 ## Overview
 
 PDHD-Net extends nnDetection by integrating:
-- **Enhanced Encoder-Decoder Architecture**: Channel-aware lightweight fusion (C) + Spatial-Wavelet fusion (SW) + Bidirectional Feature Pyramid Network (BiFPN)
+- **Enhanced Encoder-Decoder Architecture**: Channel-aware lightweight fusion (C) + Swin Transformer encoder + Bidirectional Feature Pyramid Network (BiFPN)
+- **Frequency Domain Enhancement**: FFT-based feature extraction for improved multi-scale representation
 - **Class Imbalance Handling**: Focal loss with dynamic class weighting and balanced sampling strategies
 - **Multi-Grade Classification**: Simultaneous detection and Gleason Grade Group (GGG 1-5) classification
 
@@ -17,11 +18,17 @@ PDHD-Net extends nnDetection by integrating:
    - Efficient multi-scale feature integration with minimal computational overhead
    - Adaptive channel attention for enhanced feature representation
 
-2. **Spatial-Wavelet Fusion (SW)**
-   - Wavelet-based multi-resolution feature extraction
-   - Preserves both spatial and frequency domain information
+2. **Swin Transformer Encoder**
+   - Hierarchical vision transformer with shifted windows
+   - Efficient self-attention mechanism for long-range dependencies
+   - Multi-scale feature extraction with linear computational complexity
 
-3. **Bidirectional Feature Pyramid Network (BiFPN)**
+3. **FFT-based Feature Enhancement**
+   - Fast Fourier Transform for frequency domain analysis
+   - Captures global patterns and texture information
+   - Complements spatial features with frequency characteristics
+
+4. **Bidirectional Feature Pyramid Network (BiFPN)**
    - Weighted bidirectional cross-scale connections
    - Improved feature fusion across different resolution levels
 
@@ -202,7 +209,9 @@ The evaluation computes:
 ```
 Input (T2W + ADC + DWI)
     ↓
-Encoder (ResNet-like with C+SW fusion)
+Swin Transformer Encoder (with C fusion)
+    ↓
+FFT Feature Enhancement
     ↓
 BiFPN Decoder (Multi-scale feature fusion)
     ↓
@@ -213,7 +222,7 @@ Detection Head
 
 ### Key Components
 
-- **Backbone**: Modified ResNet with channel-aware and wavelet fusion
+- **Backbone**: Swin Transformer with channel-aware fusion and FFT enhancement
 - **Neck**: BiFPN for bidirectional multi-scale feature aggregation
 - **Head**: Anchor-based detection with class-specific regression
 
